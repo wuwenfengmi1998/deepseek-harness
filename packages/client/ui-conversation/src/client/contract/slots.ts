@@ -23,12 +23,23 @@ import type { ChatNode, ChatNodeKind } from './chat-nodes.ts'
 import type { CallId, SelectionTarget, ViewTab } from './views.ts'
 
 /** Browser-owned image that has not crossed the durable host boundary. */
-export interface ComposerAttachment {
+/** A browser-owned draft image with an object-URL preview. */
+export interface ComposerImageAttachment {
   kind: 'image'
   id: DraftAttachmentId
   file: File
   previewUrl: string
 }
+
+/** A browser-owned draft file of any type (no preview). */
+export interface ComposerFileAttachment {
+  kind: 'file'
+  id: DraftAttachmentId
+  file: File
+}
+
+/** One browser-owned draft attachment; only its id enters input state. */
+export type ComposerAttachment = ComposerImageAttachment | ComposerFileAttachment
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
@@ -499,6 +510,12 @@ export interface ComposerBarInjected {
   removeImage: ((id: DraftAttachmentId) => void) | undefined
   /** Resolve ordered input ids to browser-owned draft images. */
   draftImages: ((ids: readonly DraftAttachmentId[]) => readonly ComposerAttachment[]) | undefined
+  /** Register dropped non-image files in the session input after the size check. */
+  addFiles: ((files: readonly File[]) => string | null) | undefined
+  /** Release one draft file and remove its id from session input. */
+  removeFile: ((id: DraftAttachmentId) => void) | undefined
+  /** Resolve ordered input ids to browser-owned draft files. */
+  draftFiles: ((ids: readonly DraftAttachmentId[]) => readonly ComposerAttachment[]) | undefined
   /** Resolve one keyboard submission gesture against the current running state and persisted preference. */
   resolveSubmitMode: (
     running: boolean,

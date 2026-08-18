@@ -202,6 +202,9 @@ function mount(
           addImages={() => null}
           removeImage={() => {}}
           draftImages={() => []}
+          addFiles={() => null}
+          removeFile={() => {}}
+          draftFiles={() => []}
           resolveSubmitMode={() => 'queue'}
           toggleCommandMenu={vi.fn()}
           useNotices={bindSnapshotSelector(wiring.notices)}
@@ -309,7 +312,7 @@ describe('ConversationRoot resident composer', () => {
     fireEvent.change(box, { target: { value: 'ordinary revised' } })
     expect(b.chat.store.getSnapshot().draft).toBe('ordinary revised')
     fireEvent.keyDown(box, { key: 'Enter' })
-    expect(b.sink).toHaveBeenCalledWith('ordinary revised', [], 'queue')
+    expect(b.sink).toHaveBeenCalledWith('ordinary revised', [], [], 'queue')
     expect((b.view.getByRole('button', { name: 'Child' }) as HTMLButtonElement).disabled).toBe(true)
     expect(b.view.queryByText('Root')).toBeNull()
   })

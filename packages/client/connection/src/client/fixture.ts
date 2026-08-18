@@ -2491,6 +2491,24 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         }
         return ok(request, stored)
       },
+      uploadFile: (request) => {
+        const { sessionId } = request.payload
+        const id = String(sessionId)
+        if (!sessions.some(s => s.sessionId === id)) {
+          return err(request, {
+            code: 'session-not-found',
+            message: `fixture has no session ${id}`,
+            details: { sessionId },
+          })
+        }
+        const name = String(request.payload.name ?? 'file')
+        const data = String(request.payload.data ?? '')
+        return ok(request, {
+          name,
+          path: `uploads/${name}`,
+          bytes: Math.max(0, Math.floor(data.length * 3 / 4)),
+        })
+      },
       updateQueue: request => err(request, {
         code: 'queue-item-not-found',
         message: 'fixture has no pending queue item',
@@ -3087,6 +3105,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'session.fork': return this.api.sessions.fork(request)
       case 'session.prompt': return this.api.sessions.prompt(request)
       case 'session.attachment': return this.api.sessions.attachment(request)
+      case 'session.uploadFile': return this.api.sessions.uploadFile(request)
       case 'session.updateQueue': return this.api.sessions.updateQueue(request)
       case 'session.cancel': return this.api.sessions.cancel(request)
       case 'subagent.list': return this.api.subagents.list(request)

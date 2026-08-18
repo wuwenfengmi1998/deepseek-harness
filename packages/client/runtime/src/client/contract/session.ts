@@ -55,6 +55,12 @@ export interface ISession {
    */
   updateQueue(itemId: MessageId, action: QueueAction): Promise<RpcResult<{ accepted: true }>>
   /**
+   * Upload one browser file into this session's workspace `uploads/` folder.
+   * @param file - `{ name, mediaType, data }` with base64-encoded bytes.
+   * @returns the upload result carrying the durable workspace-relative path.
+   */
+  uploadFile(file: { name: string; mediaType?: string; data: string }): Promise<RpcResult<{ name: string; path: string; bytes: number }>>
+  /**
    * Cancel the running turn. Pending queued work remains and resumes in FIFO
    * order after the Host reaches cancellation quiescence.
    * @returns acceptance, or the business error.

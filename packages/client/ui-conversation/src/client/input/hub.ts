@@ -13,6 +13,7 @@ import type { InputTriggerController } from '@deepseek-ai/dsh-client-ui-input-tr
 import type { TranslateNS } from '@deepseek-ai/dsh-client-locale/client'
 import { queueReadFaceOf } from '../queue/store.ts'
 import type { ComposerKeyboard, DraftAttachmentId, SessionInputResolver, SessionInput } from './contract.ts'
+import type { ComposerFileAttachment } from '../contract/slots.ts'
 import type { InputSubmitMode } from '../contract/composer-submission.ts'
 import type { PopupDismissFace } from './facade.ts'
 import { SessionInputShell } from './facade.ts'
@@ -31,6 +32,37 @@ interface ConversationAttachmentFace {
     mode: InputSubmitMode,
   ): Promise<void>
   releaseDraftImage(id: DraftAttachmentId): void
+  draftFiles(ids: readonly DraftAttachmentId[]): readonly ComposerFileAttachment[]
+  uploadFiles(
+    session: SessionFace,
+    attachments: readonly ComposerFileAttachment[],
+  ): Promise<readonly { name: string; path: string; bytes: number }[]>
+  releaseDraftFile(id: DraftAttachmentId): void
+}
+
+/** One durable upload result in draft order. */
+interface UploadedFile {
+  readonly name: string
+  readonly path: string
+  readonly bytes: number
+}
+
+/**
+ * Compose the user-visible attachment mention appended to a prompt that
+ * carries uploaded files: the Agent sees names + workspace-relative paths
+ * and reads them with its file tools.
+ * @param t - the conversation-namespace translate.
+ * @param uploaded - durable upload results in draft order.
+ * @param text - the prompt text, if any.
+ * @returns the combined message text.
+ */
+function fileMentionText(t: TranslateNS<'conversation'>, uploaded: readonly UploadedFile[], text: string): string {
+  const list = uploaded.map(file => `- ${file.name} → ${file.path}`).join('\n')
+  const first = uploaded[0]
+  const mention = uploaded.length === 1 && first !== undefined
+    ? t('file.mention', { name: first.name, path: first.path })
+    : t('file.mentionMany', { count: uploaded.length, list })
+  return text === '' ? mention : `${text}\n\n${mention}`
 }
 
 /** Session-addressed input facade registry (SessionInputResolver face + composer-layer extras). */
@@ -75,7 +107,7 @@ export class InputHub implements SessionInputResolver {
       inputTriggers: () => this.controller(actx),
       popup: () => this.popup(actx),
       queue: queueReadFaceOf(session),
-      defaultSink: (text, imageIds, mode) => { this.sink(session, text, imageIds, mode) },
+      defaultSink: (text, imageIds, fileIds, mode) => { this.sink(session, text, imageIds, fileIds, mode) },
       steerQueue: () => { void this.steerQueue(session, shell) },
     })
     this.shells.set(id, shell)
@@ -95,10 +127,12 @@ export class InputHub implements SessionInputResolver {
       return () => {
         for (const off of offs) off()
         const drafts = shell.snapshot.imageIds
+        const fileDrafts = shell.snapshot.fileIds
         shell.dispose()
         this.shells.delete(id)
         const conversation = this.rootCtx.get('conversation') as ConversationAttachmentFace | undefined
         for (const imageId of drafts) conversation?.releaseDraftImage(imageId)
+        for (const fileId of fileDrafts) conversation?.releaseDraftFile(fileId)
       }
     }, 'conversation.input: session shell')
     return shell
@@ -141,29 +175,48 @@ export class InputHub implements SessionInputResolver {
   }
 
   /**
-   * Default sink: optimistic clear + prompt. The session is always a real
-   * host entity (materialized when its workspace was picked), so there is
-   * exactly one path; a failed first prompt is an ordinary prompt failure
-   * (error strip via promptError, draft restored only while untouched).
+   * Default sink: upload draft files into the workspace, then optimistic
+   * clear + prompt. The session is always a real host entity (materialized
+   * when its workspace was picked), so there is exactly one path; a failed
+   * first prompt is an ordinary prompt failure (error strip via promptError,
+   * draft restored only while untouched). An upload failure surfaces as one
+   * composer notice and keeps every draft chip for a retry.
    */
   private sink(
     session: SessionFace,
     text: string,
     imageIds: readonly DraftAttachmentId[],
+    fileIds: readonly DraftAttachmentId[],
     mode: InputSubmitMode,
   ): void {
-    if (text === '' && imageIds.length === 0) return
+    if (text === '' && imageIds.length === 0 && fileIds.length === 0) return
     const shell = this.shells.get(session.sessionId)
-    // Commit, not an editable clear: undo must not resurrect sent content.
-    shell?.commitSend(imageIds)
-    void this.conversation().sendSession(session, text, imageIds, mode).catch(() => {
+    const conversation = this.conversation()
+    const files = fileIds.length === 0 ? [] : conversation.draftFiles(fileIds)
+    const doSend = async (): Promise<void> => {
+      let finalText = text
+      if (files.length > 0) {
+        try {
+          const uploaded = await conversation.uploadFiles(session, files)
+          finalText = fileMentionText(this.t, uploaded, text)
+        } catch (error: unknown) {
+          shell?.notify('error', this.t('file.writeFailed'))
+          throw error
+        }
+      }
+      // Commit, not an editable clear: undo must not resurrect sent content.
+      shell?.commitSend(imageIds, fileIds)
+      await conversation.sendSession(session, finalText, imageIds, mode)
+    }
+    void doSend().catch(() => {
       if (this.shells.get(session.sessionId) === shell) {
         shell?.restoreImages(imageIds)
+        shell?.restoreFiles(fileIds)
         if (shell?.snapshot.draft === '') shell.setDraft(text)
         return
       }
-      const conversation = this.rootCtx.get('conversation') as ConversationAttachmentFace | undefined
       for (const id of imageIds) conversation?.releaseDraftImage(id)
+      for (const id of fileIds) conversation?.releaseDraftFile(id)
     })
   }
 

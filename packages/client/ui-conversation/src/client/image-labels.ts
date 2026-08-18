@@ -7,6 +7,7 @@ import type {
 } from '@deepseek-ai/dsh-client-ui-attachment'
 import type { ImageAttachmentLimits } from '@deepseek-ai/dsh-attachment'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
+import { MAX_DRAFT_FILE_BYTES } from './service.ts'
 import type { ConversationKey } from './locales.ts'
 
 /**
@@ -52,6 +53,10 @@ export function attachmentErrorText(
     case 'IMAGES_TOO_LARGE':
       if (limits !== undefined) return t('image.totalTooLarge', { size: imageSizeText(limits.maxMessageImageBytes) })
       break
+    case 'FILE_TOO_LARGE': return t('file.tooLarge', { size: imageSizeText(MAX_DRAFT_FILE_BYTES) })
+    case 'INVALID_FILE_BASE64':
+    case 'FILE_EMPTY': return t('file.empty')
+    case 'FILE_WRITE_FAILED': return t('file.writeFailed')
     default: break
   }
   return t('image.sendFailed', { reason })
@@ -92,12 +97,14 @@ export function messageImageLabels(t: Translate<ConversationKey>): MessageImageL
 export function dropOverlayLabels(
   t: Translate<ConversationKey>,
   accepting: boolean,
-  limits?: { count: number; size: string },
+  limits?: { count: number; size: string; fileSize: string },
 ): DropOverlayLabels {
-  if (!accepting) return { title: t('image.dropBlocked') }
+  if (!accepting) return { title: t('file.dropBlocked') }
   return {
-    title: t('image.dropTitle'),
-    desc: limits === undefined ? undefined : t('image.dropDesc', { count: limits.count, size: limits.size }),
+    title: t('file.dropTitle'),
+    desc: limits === undefined
+      ? undefined
+      : t('file.dropDesc', { count: limits.count, size: limits.size, fileSize: limits.fileSize }),
   }
 }
 

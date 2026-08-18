@@ -357,6 +357,15 @@ export interface SessionsApi {
   Promise<RpcResponse<{ attachment: ImageAttachmentRef; data: string }>>
 
   /**
+   * Persists one browser file into the session's workspace `uploads/` directory.
+   * The bytes travel base64-encoded; the host sanitizes the name, enforces the
+   * per-file byte cap, and deduplicates colliding names with a numeric suffix.
+   * @returns the sanitized name and the workspace-relative path the Agent can read.
+   */
+  uploadFile(request: RpcRequest<{ sessionId: SessionId; name: string; mediaType?: string; data: string }>):
+  Promise<RpcResponse<{ name: string; path: string; bytes: number }>>
+
+  /**
    * Edits, removes, or strictly steers one pending queued occurrence on an ordinary session.
    * Session-backed subagents reject with `agent-busy`.
    */

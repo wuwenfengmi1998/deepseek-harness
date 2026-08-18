@@ -4,8 +4,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { mkdir, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
@@ -130,6 +130,36 @@ function decodeBase64(data: string): Uint8Array {
     throw new AttachmentError('Image upload is not canonical base64.', 'INVALID_IMAGE_BASE64')
   }
   return new Uint8Array(decoded)
+}
+
+/** Default maximum bytes for one uploaded file (32 MiB). */
+const MAX_UPLOAD_FILE_BYTES = 32 * 1024 * 1024
+
+/** Strip a browser file name to a safe single-path-component basename. */
+function sanitizeUploadName(name: string): string {
+  const base = basename(String(name ?? '')).replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 120)
+  if (base === '' || base === '.' || base === '..') return 'file'
+  return base
+}
+
+/**
+ * Write upload bytes under a directory, deduplicating name collisions with a
+ * numeric suffix before the final extension (`report.pdf` → `report-1.pdf`).
+ * @returns the stored file name.
+ */
+async function saveUploadedFile(uploadsDir: string, safeName: string, bytes: Uint8Array): Promise<string> {
+  const ext = extname(safeName)
+  const stem = safeName.slice(0, safeName.length - ext.length)
+  await mkdir(uploadsDir, { recursive: true })
+  for (let attempt = 0; ; attempt += 1) {
+    const name = attempt === 0 ? safeName : `${stem}-${attempt}${ext}`
+    try {
+      await writeFile(join(uploadsDir, name), bytes, { flag: 'wx' })
+      return name
+    } catch (error: unknown) {
+      if (error instanceof Error && 'code' in error && error.code !== 'EEXIST') throw error
+    }
+  }
 }
 
 /** Validate one prompt as a batch before publishing any durable image object. */
@@ -2501,6 +2531,65 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             code: 'internal',
             message: 'Unable to read image attachment.',
             details: {},
+          })
+        }
+      },
+
+      async uploadFile(request) {
+        const { sessionId, name, data } = request.payload
+        const session = ctx.sessions.get(sessionId)
+        if (session === undefined) {
+          return err(request, {
+            code: 'session-not-found',
+            message: `session "${sessionId}" not found (not attached)`,
+            details: { sessionId },
+          })
+        }
+        const cwd = session.header.cwd
+        if (cwd === undefined) {
+          return err(request, {
+            code: 'internal',
+            message: `session "${sessionId}" has no project cwd`,
+            details: {},
+          })
+        }
+        let bytes: Uint8Array
+        try {
+          bytes = decodeBase64(data)
+        } catch (error: unknown) {
+          return err(request, {
+            code: 'attachment-error',
+            message: error instanceof Error ? error.message : String(error),
+            details: { reason: 'INVALID_FILE_BASE64' },
+          })
+        }
+        if (bytes.byteLength === 0) {
+          return err(request, {
+            code: 'attachment-error',
+            message: 'Uploaded file is empty.',
+            details: { reason: 'FILE_EMPTY' },
+          })
+        }
+        if (bytes.byteLength > MAX_UPLOAD_FILE_BYTES) {
+          return err(request, {
+            code: 'attachment-error',
+            message: `Uploaded file exceeds the ${MAX_UPLOAD_FILE_BYTES / (1024 * 1024)} MiB limit.`,
+            details: { reason: 'FILE_TOO_LARGE' },
+          })
+        }
+        const safeName = sanitizeUploadName(name)
+        try {
+          const stored = await saveUploadedFile(join(cwd, 'uploads'), safeName, bytes)
+          return ok(request, {
+            name: safeName,
+            path: `uploads/${stored}`,
+            bytes: bytes.byteLength,
+          })
+        } catch (error: unknown) {
+          return err(request, {
+            code: 'attachment-error',
+            message: `failed to save uploaded file: ${error instanceof Error ? error.message : String(error)}`,
+            details: { reason: 'FILE_WRITE_FAILED' },
           })
         }
       },

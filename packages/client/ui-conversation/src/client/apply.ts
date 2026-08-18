@@ -18,12 +18,13 @@ import type {
 } from './contract/slots.ts'
 import type { InputNotice } from './input/contract.ts'
 import { createChatStore } from './stores.ts'
-import { ConversationController, UnsupportedImageMediaTypeError } from './service.ts'
+import { ConversationController, MAX_DRAFT_FILE_BYTES, UnsupportedImageMediaTypeError } from './service.ts'
 import type { IConversation } from './service.ts'
 import { ComposerBlockRegistry } from './input/blocks.ts'
 import type { ComposerBlock } from './input/blocks.ts'
 import { InputHub } from './input/hub.ts'
 import { ComposerSubmissionPolicy } from './input/submission-policy.ts'
+import { imageSizeText } from './image-labels.ts'
 import { InputBar } from './skeleton/InputBar.tsx'
 import { EnterBehaviorRow } from './settings/EnterBehaviorRow.tsx'
 import type { EnterBehaviorRowInjected } from './settings/EnterBehaviorRow.tsx'
@@ -292,6 +293,9 @@ export function apply(ctx: Context): void {
           addImages: undefined,
           removeImage: undefined,
           draftImages: undefined,
+          addFiles: undefined,
+          removeFile: undefined,
+          draftFiles: undefined,
           resolveSubmitMode: (running, gesture, steeringAvailable) =>
             submissionPolicy.resolve(running, gesture, steeringAvailable),
           toggleCommandMenu: undefined,
@@ -326,6 +330,25 @@ export function apply(ctx: Context): void {
           shell.removeImage(id)
         },
         draftImages: ids => conversation.draftImages(ids),
+        addFiles: (files) => {
+          try {
+            const drafts = conversation.createDraftFiles(files)
+            if (!shell.addFiles(drafts.map(draft => draft.id))) {
+              conversation.releaseDraftFiles(drafts)
+            }
+            return null
+          } catch (error: unknown) {
+            if (error instanceof Error && error.message === 'draft file too large') {
+              return t('file.tooLarge', { size: imageSizeText(MAX_DRAFT_FILE_BYTES) })
+            }
+            return error instanceof Error ? error.message : String(error)
+          }
+        },
+        removeFile: (id) => {
+          conversation.releaseDraftFile(id)
+          shell.removeFile(id)
+        },
+        draftFiles: ids => conversation.draftFiles(ids),
         resolveSubmitMode: (running, gesture, steeringAvailable) =>
           submissionPolicy.resolve(running, gesture, steeringAvailable),
         toggleCommandMenu: inputTriggers === undefined

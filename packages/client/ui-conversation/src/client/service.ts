@@ -14,7 +14,7 @@ import type { Context } from '@deepseek-ai/cordis'
 // method) instead of the standalone helper.
 import type { ISessions, SessionFace, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
-import type { ComposerAttachment } from './contract/slots.ts'
+import type { ComposerAttachment, ComposerFileAttachment, ComposerImageAttachment } from './contract/slots.ts'
 import type { QueueAction, QueueItemId } from './contract/queue.ts'
 import type { ComposerBlocks } from './input/blocks.ts'
 import type { DraftAttachmentId, SessionInputResolver } from './input/contract.ts'
@@ -59,7 +59,7 @@ export interface IConversation {
 }
 
 /** Create one browser-only draft descriptor; only its id enters input state. */
-function browserDraftAttachment(file: File): ComposerAttachment {
+function browserDraftAttachment(file: File): ComposerImageAttachment {
   return {
     kind: 'image',
     id: crypto.randomUUID() as DraftAttachmentId,
@@ -67,6 +67,18 @@ function browserDraftAttachment(file: File): ComposerAttachment {
     file,
   }
 }
+
+/** Create one browser-only draft file descriptor (no preview; bytes stay in the File). */
+function browserDraftFile(file: File): ComposerFileAttachment {
+  return {
+    kind: 'file',
+    id: crypto.randomUUID() as DraftAttachmentId,
+    file,
+  }
+}
+
+/** Default maximum bytes for one dropped file (mirrors the host admission cap). */
+export const MAX_DRAFT_FILE_BYTES = 32 * 1024 * 1024
 
 interface ImageUrlEntry {
   readonly sessionId: SessionId
@@ -161,12 +173,28 @@ export class ConversationController extends Service implements IConversation {
    * @param files - browser files to register after MIME validation.
    * @returns ordered draft descriptors.
    */
-  createDraftImages(files: readonly File[]): readonly ComposerAttachment[] {
+  createDraftImages(files: readonly File[]): readonly ComposerImageAttachment[] {
     for (const file of files) imageMediaType(file.type)
     return files.map((file) => {
       const attachment = browserDraftAttachment(file)
       this.draftAttachments.set(attachment.id, attachment)
       this.createdImageUrls.add(attachment.previewUrl)
+      return attachment
+    })
+  }
+
+  /**
+   * Create runtime-only draft files after a size check.
+   * @param files - browser files to register.
+   * @returns ordered draft descriptors.
+   */
+  createDraftFiles(files: readonly File[]): readonly ComposerFileAttachment[] {
+    for (const file of files) {
+      if (file.size > MAX_DRAFT_FILE_BYTES) throw new Error('draft file too large')
+    }
+    return files.map((file) => {
+      const attachment = browserDraftFile(file)
+      this.draftAttachments.set(attachment.id, attachment)
       return attachment
     })
   }
@@ -193,6 +221,7 @@ export class ConversationController extends Service implements IConversation {
     const attachment = this.draftAttachments.get(id)
     if (attachment === undefined) return
     this.draftAttachments.delete(id)
+    if (attachment.kind !== 'image') return
     this.createdImageUrls.delete(attachment.previewUrl)
     revokePreview(attachment.previewUrl)
   }
@@ -203,6 +232,57 @@ export class ConversationController extends Service implements IConversation {
    */
   releaseDraftImages(attachments: readonly ComposerAttachment[]): void {
     for (const attachment of attachments) this.releaseDraftImage(attachment.id)
+  }
+
+  /**
+   * Resolve ordered input-state ids to runtime-owned draft files.
+   * @param ids - draft file ids.
+   * @returns descriptors that remain live, in requested order.
+   */
+  draftFiles(ids: readonly DraftAttachmentId[]): readonly ComposerFileAttachment[] {
+    const attachments: ComposerFileAttachment[] = []
+    for (const id of ids) {
+      const attachment = this.draftAttachments.get(id)
+      if (attachment !== undefined && attachment.kind === 'file') attachments.push(attachment)
+    }
+    return attachments
+  }
+
+  /** Release one browser-owned draft file. */
+  releaseDraftFile(id: DraftAttachmentId): void {
+    const attachment = this.draftAttachments.get(id)
+    if (attachment === undefined || attachment.kind !== 'file') return
+    this.draftAttachments.delete(id)
+  }
+
+  /** Release a set of browser-owned draft files. */
+  releaseDraftFiles(attachments: readonly ComposerFileAttachment[]): void {
+    for (const attachment of attachments) this.releaseDraftFile(attachment.id)
+  }
+
+  /**
+   * Upload ordered draft files into the session workspace.
+   * @param session - target session.
+   * @param attachments - draft file descriptors.
+   * @returns durable `{ name, path, bytes }` results in order.
+   */
+  async uploadFiles(
+    session: SessionFace,
+    attachments: readonly ComposerFileAttachment[],
+  ): Promise<readonly { name: string; path: string; bytes: number }[]> {
+    const uploaded: { name: string; path: string; bytes: number }[] = []
+    for (const attachment of attachments) {
+      const result = await session.uploadFile({
+        name: attachment.file.name || 'file',
+        mediaType: attachment.file.type || 'application/octet-stream',
+        data: bytesToBase64(new Uint8Array(await attachment.file.arrayBuffer())),
+      })
+      if (!result.ok) {
+        throw new Error(`conversation.uploadFiles failed: ${result.error.code}: ${result.error.message}`)
+      }
+      uploaded.push(result.value)
+    }
+    return uploaded
   }
 
   /**

@@ -326,6 +326,21 @@ export const sessionAttachmentValueSchema = z.object({
   data: z.string(),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.attachment'>>>
 
+/** session.uploadFile request payload (browser file bytes, base64). */
+export const sessionUploadFileRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  name: z.string().min(1).max(200),
+  mediaType: z.string().max(200).optional(),
+  data: z.string(),
+}) satisfies z.ZodType<Wire<RequestPayload<'session.uploadFile'>>>
+
+/** session.uploadFile response value (durable workspace-relative path). */
+export const sessionUploadFileValueSchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  bytes: z.number().int().nonnegative(),
+}) satisfies z.ZodType<Wire<ResponseValue<'session.uploadFile'>>>
+
 /** session.updateQueue request payload. */
 export const sessionUpdateQueueRequestSchema = z.object({
   sessionId: sessionIdSchema,
