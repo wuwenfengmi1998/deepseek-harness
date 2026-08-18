@@ -14,7 +14,7 @@ dsh web 的输入框只接受 PNG/JPG/WebP/GIF 拖放。限制并非缺一个 `a
 
 **Wire 契约。** 请求：`{ sessionId, name (1..200), mediaType? (≤200), data }`，`data` 为规范 base64。响应：`{ name, path, bytes }`，`path` 为工作区相对路径。复用 `attachment-error` 错误码新增 reason：`INVALID_FILE_BASE64`、`FILE_EMPTY`、`FILE_TOO_LARGE`、`FILE_WRITE_FAILED`；客户端映射为产品文案。
 
-**主机准入。** 处理器解析在线会话的 `header.cwd`，用共享的规范 base64 校验解码，拒绝空文件，单文件 32 MiB 上限（远低于 160 MiB 的 HTTP 载体请求体上限），文件名经 `basename` + 控制字符剥离 + 120 字符截断净化（路径穿越不可能：`../../evil.txt` 存为 `evil.txt`），以 `flag: 'wx'` 写入 `uploads/`，重名按最终扩展名前的数字后缀去重（`a.txt` → `a-1.txt`），无检查-再写竞态。
+**主机准入。** 处理器解析在线会话的 `header.cwd`，用共享的规范 base64 校验解码，拒绝空文件，单文件 32 MiB 上限（远低于 160 MiB 的 HTTP 载体请求体上限），文件名经 `basename` + 控制字符剥离 + 120 字符截断净化（路径穿越不可能：`../../evil.txt` 存为 `evil.txt`），以 `flag: 'wx'` 写入 `uploads/`。内容按 SHA-256 去重：已存在的同字节文件直接复用（先精确同名匹配，再按相同大小扫描），重复上传不产生字节副本且保留原路径；只有不同内容占用名字时才在最终扩展名前加数字后缀（`a.txt` → `a-1.txt`），独占写保证绝不覆盖。
 
 **客户端。** `client-connection` 的 sessions API 与 fixture world 增加该 RPC；`client-runtime` 的会话面（契约接口 + 实现）增加 `uploadFile()`。`ui-conversation` 新增：复用现有草稿附件注册表的文件草稿描述符（`kind: 'file'`，无预览 URL）、输入状态 `fileIds` 及镜像图片动作的 `addFiles/removeFile/pruneFiles/restoreFiles`、按 MIME 分流的 intake（`image/*` 走图片通道与限额；其余走文件通道，自带 32 MiB 预检）、「📎 名称 ×」胶囊行（逐个移除）、hub sink 先上传后发送（失败 → 一条输入框通知 + 草稿胶囊保留可重试）、拖放遮罩文案泛化为图片或文件并在说明行同时列出两类限额。[[2026-08-12-web-image-intake-and-limits-alignment]] 的图片摄入决策（整页拖放、限额投影、轨道/缩略图几何）保持不变；本笔记在同一摄入点并行扩展一条文件通道。
 
