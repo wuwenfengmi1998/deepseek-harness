@@ -3,7 +3,7 @@
 // assistant answers), pending steering (copy only), context injection,
 // compaction marker, retry disclosure, and unknown-surface JSON rows.
 
-import { Fragment, memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type {
   ModelRetryNode, TurnErrorNode, UserMessageNode,
@@ -254,6 +254,22 @@ function fileMentionsIn(text: string): FileMentionBlock[] {
   return blocks.sort((a, b) => a.start - b.start)
 }
 
+/**
+ * Remove every file-mention block from the message text, leaving the prose
+ * that renders inside the bubble (mention text is presentation scaffolding —
+ * the chips carry the file name and path).
+ */
+function stripFileMentions(text: string, blocks: readonly FileMentionBlock[]): string {
+  if (blocks.length === 0) return text
+  let out = ''
+  let cursor = 0
+  for (const block of blocks) {
+    out += text.slice(cursor, block.start)
+    cursor = block.end
+  }
+  return out + text.slice(cursor)
+}
+
 /** One attached-file chip in history, mirroring the draft chips of the composer. */
 function FileMentionCard({ mention }: { mention: FileMention }): ReactNode {
   return (
@@ -263,31 +279,6 @@ function FileMentionCard({ mention }: { mention: FileMention }): ReactNode {
       <span className={css.fileMentionPath}>{mention.path}</span>
     </span>
   )
-}
-
-/**
- * Projection over the whole user-message text: file-mention blocks become
- * their chips with the mention text hidden, everything else rides the plain
- * reference-token projection.
- */
-function projectUserText(text: string): ReactNode {
-  const blocks = fileMentionsIn(text)
-  if (blocks.length === 0) return projectUserTextPlain(text)
-  const parts: ReactNode[] = []
-  let cursor = 0
-  for (const block of blocks) {
-    if (block.start > cursor) {
-      parts.push(<Fragment key={`text-${cursor}`}>{projectUserTextPlain(text.slice(cursor, block.start))}</Fragment>)
-    }
-    for (const mention of block.files) {
-      parts.push(<FileMentionCard key={`file-${mention.start}`} mention={mention} />)
-    }
-    cursor = block.end
-  }
-  if (cursor < text.length) {
-    parts.push(<Fragment key={`text-${cursor}`}>{projectUserTextPlain(text.slice(cursor))}</Fragment>)
-  }
-  return <>{parts}</>
 }
 
 /** Right-aligned bubble shared by user and steering rows. */
@@ -303,14 +294,22 @@ function UserStyleBubble({
   t: ChatViewSlotProps['t']
 }): ReactNode {
   const { text, images, rest } = contentParts(content)
+  const mentionBlocks = fileMentionsIn(text)
+  const fileMentions = mentionBlocks.flatMap(block => block.files)
+  const plainText = stripFileMentions(text, mentionBlocks)
   const truncated = (total: number): string => t('json.truncated', { total })
-  const showBubble = text !== '' || rest.length > 0
+  const showBubble = plainText !== '' || rest.length > 0
   return (
     <div className={css.userRow} data-pending-steering={pending || undefined} data-time-hover-root>
       <div className={css.userStack}>
         <ImageGallery images={images} load={imageLoader} align="end" labels={messageImageLabels(t)} />
+        {fileMentions.length > 0 && (
+          <div className={css.fileMentionRow} data-file-mentions>
+            {fileMentions.map(mention => <FileMentionCard key={mention.start} mention={mention} />)}
+          </div>
+        )}
         {showBubble && <div className={css.bubble}>
-          {projectUserText(text)}
+          {projectUserTextPlain(plainText)}
           {rest.map((block, i) => <JsonBlock key={i} label={t('message.extraBlock')} payload={block} truncatedLabel={truncated} />)}
         </div>}
       </div>

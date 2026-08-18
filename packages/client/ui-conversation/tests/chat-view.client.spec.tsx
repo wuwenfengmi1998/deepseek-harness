@@ -837,10 +837,20 @@ describe('ChatView', () => {
     expect(chips[2]?.textContent).toContain('b.json')
     expect(chips[3]?.textContent).toContain('notes.txt')
     // The mention text itself (header lines included) is hidden, like image
-    // blocks hide their bytes; surrounding prose stays literal text.
+    // blocks hide their bytes; chips render in their own row ABOVE the
+    // bubble, and surrounding prose stays literal text inside it.
     expect(view.queryByText(/用户上传了/)).toBeNull()
     expect(view.queryByText(/User attached/)).toBeNull()
     expect(view.getByText(/请查收附件/)).toBeTruthy()
+    const chipRows = view.container.querySelectorAll('[data-file-mentions]')
+    expect(chipRows).toHaveLength(3)
+    expect(chipRows[0]?.querySelectorAll('[data-file-mention]')).toHaveLength(1)
+    expect(chipRows[1]?.querySelectorAll('[data-file-mention]')).toHaveLength(2)
+    // The chips row sits above the text bubble: its next sibling carries the
+    // surrounding prose and no chips.
+    const bubble = chipRows[0]?.nextElementSibling
+    expect(bubble?.textContent).toContain('请查收附件')
+    expect(bubble?.querySelector('[data-file-mention]')).toBeNull()
   })
 
   it('streaming partial frames update the tail without replacing a sibling Tool row', () => {

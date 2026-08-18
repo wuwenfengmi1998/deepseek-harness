@@ -286,12 +286,18 @@
 /* File-mention chip inside a user bubble: the composer's attached-file
    mention (`file.mention*`) projects as a chip, mirroring the draft chips,
    while the logged text stays the single truth. */
+.fileMentionRow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .fileMention {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  margin: 1px 2px;
   padding: 2px 8px 2px 6px;
   border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 10px;
