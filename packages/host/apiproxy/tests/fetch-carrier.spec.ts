@@ -102,6 +102,12 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
           result: { ok: true, value: { attachment: { attachmentId: 'a' as never, mediaType: 'image/png' as const, bytes: 1, width: 1, height: 1 }, data: 'AA==' } },
         }
       },
+      async uploadFile(request) {
+        return {
+          rpcId: request.rpcId,
+          result: { ok: true, value: { name: request.payload.name, path: `uploads/${request.payload.name}`, bytes: 0 } },
+        }
+      },
       async updateQueue(request) {
         return { rpcId: request.rpcId, result: { ok: true, value: { accepted: true as const } } }
       },

@@ -14,7 +14,7 @@ import type {
 import type { QueueRow } from '../contract/queue.ts'
 import type { InputSubmitMode } from '../contract/composer-submission.ts'
 
-/** Browser-runtime identity of one unsent image draft. */
+/** Browser-runtime identity of one unsent draft attachment (image or file). */
 export type DraftAttachmentId = Branded<'DraftAttachmentId'>
 
 /**
@@ -39,6 +39,12 @@ export interface SessionInput extends InputTarget {
   removeImage(id: DraftAttachmentId): void
   /** Drop ids whose browser-owned objects no longer exist. */
   pruneImages(ids: readonly DraftAttachmentId[]): void
+  /** Append ordered browser-owned file ids; busy admission phases refuse. */
+  addFiles(ids: readonly DraftAttachmentId[]): boolean
+  /** Remove one browser-owned file id. */
+  removeFile(id: DraftAttachmentId): void
+  /** Drop ids whose browser-owned objects no longer exist. */
+  pruneFiles(ids: readonly DraftAttachmentId[]): void
   /**
    * THE complexity sink: enter adjudication, submit transaction, and the default sink live inside.
    * @param mode - delivery intent retained through asynchronous adjudication and serialization.
@@ -79,6 +85,12 @@ export interface InputActions {
   removeImage(id: DraftAttachmentId): void
   /** Drop ids whose browser-owned objects no longer exist. */
   pruneImages(ids: readonly DraftAttachmentId[]): void
+  /** Append ordered browser-owned file ids; busy admission phases refuse. */
+  addFiles(ids: readonly DraftAttachmentId[]): boolean
+  /** Remove one browser-owned file id. */
+  removeFile(id: DraftAttachmentId): void
+  /** Drop ids whose browser-owned objects no longer exist. */
+  pruneFiles(ids: readonly DraftAttachmentId[]): void
   /** Enter submission (adjudication / claim transaction / default sink inside). */
   submit(): void
 }
@@ -210,6 +222,8 @@ export interface InputState {
   readonly draft: string
   /** Ordered runtime-only image ids; bytes and URLs stay in ConversationController. */
   readonly imageIds: readonly DraftAttachmentId[]
+  /** Ordered runtime-only file ids; bytes stay in ConversationController. */
+  readonly fileIds: readonly DraftAttachmentId[]
   /** Monotonic draft revision (span CAS compares against this). */
   readonly draftRev: number
   readonly phase: 'plain' | 'adjudicating' | 'claimed' | 'submitting'

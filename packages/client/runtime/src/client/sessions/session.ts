@@ -291,6 +291,21 @@ export class Session implements SessionFace {
   }
 
   /**
+   * Upload one browser file into this session's workspace `uploads/` folder.
+   * @param file - `{ name, mediaType, data }` with base64-encoded bytes.
+   * @returns the upload result carrying the durable workspace-relative path.
+   */
+  async uploadFile(
+    file: { name: string; mediaType?: string; data: string },
+  ): Promise<RpcResult<{ name: string; path: string; bytes: number }>> {
+    try {
+      return (await this.api.sessions.uploadFile({ sessionId: this.sessionId, ...file })).result
+    } catch (error) {
+      return transportError(error)
+    }
+  }
+
+  /**
    * Stop the active turn while the Host preserves pending inbox work; failures
    * land in promptError (same error-strip display slot). A continuable
    * subagent address routes through `subagent.interrupt`, whose durable

@@ -23,12 +23,13 @@ import type {} from '@deepseek-ai/dsh-goal/client'
 // wire types: apiproxy's sessions contract declares it, and client-runtime's
 // api-remotes import already places it in every client program.
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ComposerAttachment, ComposerBarProps } from '../contract/slots.ts'
+import type { ComposerAttachment, ComposerBarProps, ComposerImageAttachment } from '../contract/slots.ts'
 import { deriveDecorations } from '../input/decorations.ts'
 import type { DraftDecorations } from '../input/decorations.ts'
 import {
   attachmentErrorText, attachmentRailLabels, dropOverlayLabels, imageSizeText, lightboxLabels,
 } from '../image-labels.ts'
+import { MAX_DRAFT_FILE_BYTES } from '../service.ts'
 import { ContextMeter } from './ContextMeter.tsx'
 import { PermissionSelect } from './PermissionSelect.tsx'
 import css from './InputBar.module.css'
@@ -45,6 +46,7 @@ export type InputBarProps = ComposerBarProps
 
 export function InputBar({
   useSession, useInput, inputActions, keyboard, addImages, removeImage, draftImages,
+  addFiles, removeFile, draftFiles,
   resolveSubmitMode, toggleCommandMenu, stop, command, t,
   renderSlot, useNotices, useLexicon, useMenuLauncher,
   useProjection, sessionId, variant, disabled: inert = false, blocked,
@@ -72,7 +74,11 @@ export function InputBar({
     () => input === undefined || draftImages === undefined ? [] : draftImages(input.imageIds),
     [draftImages, input?.imageIds],
   )
-  const empty = draft.trim() === '' && attachments.length === 0
+  const files = useMemo(
+    () => input === undefined || draftFiles === undefined ? [] : draftFiles(input.fileIds),
+    [draftFiles, input?.fileIds],
+  )
+  const empty = draft.trim() === '' && attachments.length === 0 && files.length === 0
   const [preview, setPreview] = useState<ComposerAttachment | null>(null)
   const [dragActive, setDragActive] = useState(false)
   // Transient error banner (image-intake rejections and prompt failures): the
@@ -152,7 +158,10 @@ export function InputBar({
     if (attachments.length !== input.imageIds.length) {
       inputActions.pruneImages(attachments.map(attachment => attachment.id))
     }
-  }, [attachments, input?.imageIds, inputActions])
+    if (files.length !== input.fileIds.length) {
+      inputActions.pruneFiles(files.map(attachment => attachment.id))
+    }
+  }, [attachments, files, input?.imageIds, input?.fileIds, inputActions])
 
   useEffect(() => {
     if (preview !== null && !attachments.some(attachment => attachment.id === preview.id)) setPreview(null)
@@ -397,7 +406,7 @@ export function InputBar({
       .filter(item => item.kind === 'file')
       .map(item => item.getAsFile())
       .filter((file): file is File => file !== null)
-    if (files.length > 0) intakeImages(files)
+    if (files.length > 0) intakeFiles(files)
     const text = e.clipboardData.getData('text/plain')
     if (text === '') {
       if (files.length > 0) e.preventDefault()
@@ -420,33 +429,45 @@ export function InputBar({
   // a projected limit is refused as a whole batch, announced immediately, and
   // never enters the rail — no more submit-time failure rolling the rail
   // back. The host enforces the same limits at submit for callers that bypass
-  // this composer.
-  const intakeImages = useCallback((files: readonly File[]): void => {
-    if (addImages === undefined || files.length === 0) return
-    const rejected = ((): string | null => {
+  // this composer. Non-image files take the file channel (32 MiB cap);
+  // images keep the image channel and its per-message limits.
+  const intakeFiles = useCallback((fileList: readonly File[]): void => {
+    if ((addImages === undefined && addFiles === undefined) || fileList.length === 0) return
+    const isImage = (file: File): boolean => imageLimits === undefined
+      ? file.type.startsWith('image/')
+      : (imageLimits.mediaTypes as readonly string[]).includes(file.type)
+    const images: File[] = []
+    const others: File[] = []
+    for (const file of fileList) {
+      if (isImage(file)) images.push(file)
+      else others.push(file)
+    }
+    let rejected: string | null = null
+    if (images.length > 0 && addImages !== undefined) {
       if (imageLimits !== undefined) {
-        // Format precedes limits (DeepSeek Chat's filter order): a batch with
-        // a non-image must announce the format problem, not a count or size
-        // it could never pass anyway — addImages rejects it authoritatively.
-        if (files.some(file => !(imageLimits.mediaTypes as readonly string[]).includes(file.type))) {
-          return addImages(files)
-        }
-        if (attachments.length + files.length > imageLimits.maxImagesPerMessage) {
-          return t('image.tooMany', { count: imageLimits.maxImagesPerMessage })
-        }
-        if (files.some(file => file.size > imageLimits.maxImageBytes)) {
-          return t('image.fileTooLarge', { size: imageSizeText(imageLimits.maxImageBytes) })
-        }
-        const total = attachments.reduce((sum, attachment) => sum + attachment.file.size, 0)
-          + files.reduce((sum, file) => sum + file.size, 0)
-        if (total > imageLimits.maxMessageImageBytes) {
-          return t('image.totalTooLarge', { size: imageSizeText(imageLimits.maxMessageImageBytes) })
+        if (attachments.length + images.length > imageLimits.maxImagesPerMessage) {
+          rejected = t('image.tooMany', { count: imageLimits.maxImagesPerMessage })
+        } else if (images.some(file => file.size > imageLimits.maxImageBytes)) {
+          rejected = t('image.fileTooLarge', { size: imageSizeText(imageLimits.maxImageBytes) })
+        } else {
+          const total = attachments.reduce((sum, attachment) => sum + attachment.file.size, 0)
+            + images.reduce((sum, file) => sum + file.size, 0)
+          if (total > imageLimits.maxMessageImageBytes) {
+            rejected = t('image.totalTooLarge', { size: imageSizeText(imageLimits.maxMessageImageBytes) })
+          }
         }
       }
-      return addImages(files)
-    })()
+      if (rejected === null) rejected = addImages(images)
+    }
+    if (rejected === null && others.length > 0 && addFiles !== undefined) {
+      if (others.some(file => file.size > MAX_DRAFT_FILE_BYTES)) {
+        rejected = t('file.tooLarge', { size: imageSizeText(MAX_DRAFT_FILE_BYTES) })
+      } else {
+        rejected = addFiles(others)
+      }
+    }
     if (rejected !== null) showToast(rejected)
-  }, [addImages, attachments, imageLimits, showToast, t])
+  }, [addImages, addFiles, attachments, imageLimits, showToast, t])
 
   // Whole-page file-drop intake (DeepSeek Chat behavior): the listeners live
   // on the document so a drop anywhere over the window adds images, not only
@@ -455,7 +476,7 @@ export function InputBar({
   // Text drags carry no 'Files' type and pass through untouched, keeping the
   // native drop-text-into-textarea path. The overlay layer itself is
   // pointer-inert, so it never disturbs the enter/leave count.
-  const canAcceptDrop = !locked && !machineBusy && addImages !== undefined
+  const canAcceptDrop = !locked && !machineBusy && (addImages !== undefined || addFiles !== undefined)
   useEffect(() => {
     const hasFiles = (event: globalThis.DragEvent): boolean =>
       event.dataTransfer?.types.includes('Files') ?? false
@@ -489,7 +510,7 @@ export function InputBar({
       event.preventDefault()
       reset()
       if (!canAcceptDrop) return
-      intakeImages([...(event.dataTransfer?.files ?? [])])
+      intakeFiles([...(event.dataTransfer?.files ?? [])])
     }
     document.addEventListener('dragenter', onDragEnter)
     document.addEventListener('dragover', onDragOver)
@@ -503,19 +524,22 @@ export function InputBar({
       document.removeEventListener('drop', onDrop)
       window.removeEventListener('dragend', reset)
     }
-  }, [canAcceptDrop, intakeImages])
+  }, [canAcceptDrop, intakeFiles])
 
   const closePreview = useCallback(() => { setPreview(null) }, [])
 
   // Rail thumbnails with their strings resolved here: the attachment atoms are
-  // zero-cordis and read no locale.
-  const railItems = useMemo<ComposerRailItem[]>(() => attachments.map(attachment => ({
-    id: attachment.id,
-    previewUrl: attachment.previewUrl,
-    alt: attachment.file.name || t('image.pending'),
-    removeLabel: t('image.remove', { name: attachment.file.name }),
-    attachment,
-  })), [attachments, t])
+  // zero-cordis and read no locale. Only image drafts render thumbnails; file
+  // drafts render as chips below.
+  const railItems = useMemo<ComposerRailItem[]>(() => attachments
+    .filter((attachment): attachment is ComposerImageAttachment => attachment.kind === 'image')
+    .map(attachment => ({
+      id: attachment.id,
+      previewUrl: attachment.previewUrl,
+      alt: attachment.file.name || t('image.pending'),
+      removeLabel: t('image.remove', { name: attachment.file.name }),
+      attachment,
+    })), [attachments, t])
 
   const onSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>): void => {
     // Any caret/selection gesture ends a live paste attempt (the machine
@@ -645,6 +669,7 @@ export function InputBar({
           labels={dropOverlayLabels(t, canAcceptDrop, imageLimits === undefined ? undefined : {
             count: imageLimits.maxImagesPerMessage,
             size: imageSizeText(imageLimits.maxImageBytes),
+            fileSize: imageSizeText(MAX_DRAFT_FILE_BYTES),
           })}
         />
       )}
@@ -684,6 +709,25 @@ export function InputBar({
               onOpen={(item) => { setPreview(item.attachment) }}
               onRemove={(item) => { removeImage?.(item.attachment.id) }}
             />
+          </div>
+        )}
+        {files.length > 0 && (
+          <div className={css.fileRow} role="group" aria-label={t('file.pending')}>
+            {files.map(attachment => (
+              <span key={attachment.id} className={css.fileChip} title={attachment.file.name}>
+                <span aria-hidden className={css.fileChipIcon}>📎</span>
+                <span className={css.fileChipName}>{attachment.file.name}</span>
+                <button
+                  type="button"
+                  className={css.fileChipRemove}
+                  aria-label={t('file.remove', { name: attachment.file.name })}
+                  title={t('file.remove', { name: attachment.file.name })}
+                  onClick={() => { removeFile?.(attachment.id) }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
           </div>
         )}
         {/* One scrollport, two text layers. The hidden mirror renders draft+'\n' and stretches the
@@ -794,7 +838,7 @@ export function InputBar({
           </div>
         </div>
       </div>
-      {preview !== null && (
+      {preview !== null && preview.kind === 'image' && (
         <ImageLightbox
           src={preview.previewUrl}
           alt={preview.file.name || t('image.original')}

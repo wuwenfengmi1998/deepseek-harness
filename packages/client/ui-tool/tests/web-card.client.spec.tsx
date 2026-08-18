@@ -233,6 +233,9 @@ describe('DetailsPanel web Output section', () => {
           addImages: () => true,
           removeImage: () => {},
           pruneImages: () => {},
+          addFiles: () => true,
+          removeFile: () => {},
+          pruneFiles: () => {},
           submit: () => {},
         }}
         useProjection={(() => undefined)}
