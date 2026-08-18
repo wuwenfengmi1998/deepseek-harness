@@ -186,14 +186,24 @@ interface FileMention {
   readonly path: string
 }
 
+/** One contiguous mention block: the hidden text range plus its file chips. */
+interface FileMentionBlock {
+  /** Text range hidden entirely (header line included for many-file blocks). */
+  readonly start: number
+  readonly end: number
+  readonly files: readonly FileMention[]
+}
+
 /**
  * Scan user message text for the localized file-mention forms the composer
  * appends (`file.mention` / `file.mentionMany`). The logged text stays the
  * single truth; this projection lets history render attached files as chips
- * the way images render as thumbnails. Spans are disjoint and offset-sorted.
+ * the way images render as thumbnails — the mention text itself (header
+ * included) is hidden, exactly as image blocks hide their base64. Blocks are
+ * disjoint and offset-sorted.
  */
-function fileMentionsIn(text: string): FileMention[] {
-  const mentions: FileMention[] = []
+function fileMentionsIn(text: string): FileMentionBlock[] {
+  const blocks: FileMentionBlock[] = []
   const singles = [
     /\[用户上传了文件\] (.+?)（已保存至工作区 (.+?)）/g,
     /\[User attached a file\] (.+?) \(saved to workspace (.+?)\)/g,
@@ -202,11 +212,15 @@ function fileMentionsIn(text: string): FileMention[] {
     re.lastIndex = 0
     let m: RegExpExecArray | null
     while ((m = re.exec(text)) !== null) {
-      mentions.push({
+      blocks.push({
         start: m.index,
         end: m.index + m[0].length,
-        name: (m[1] ?? '').trim(),
-        path: (m[2] ?? '').trim(),
+        files: [{
+          start: m.index,
+          end: m.index + m[0].length,
+          name: (m[1] ?? '').trim(),
+          path: (m[2] ?? '').trim(),
+        }],
       })
     }
   }
@@ -220,12 +234,13 @@ function fileMentionsIn(text: string): FileMention[] {
     while ((m = re.exec(text)) !== null) {
       const body = m[1] ?? ''
       const bodyStart = m.index + (m[0].length - body.length)
+      const files: FileMention[] = []
       let lineStart = bodyStart
       for (const line of body.split('\n')) {
         if (line.trim() === '') continue
         const arrow = line.lastIndexOf(' → ')
         if (arrow === -1) continue
-        mentions.push({
+        files.push({
           start: lineStart,
           end: lineStart + line.length,
           name: line.slice(line.indexOf('- ') + 2, arrow).trim(),
@@ -233,9 +248,10 @@ function fileMentionsIn(text: string): FileMention[] {
         })
         lineStart += line.length + 1
       }
+      blocks.push({ start: m.index, end: m.index + m[0].length, files })
     }
   }
-  return mentions.sort((a, b) => a.start - b.start)
+  return blocks.sort((a, b) => a.start - b.start)
 }
 
 /** One attached-file chip in history, mirroring the draft chips of the composer. */
@@ -250,20 +266,23 @@ function FileMentionCard({ mention }: { mention: FileMention }): ReactNode {
 }
 
 /**
- * Projection over the whole user-message text: file-mention spans become
- * chips, everything else rides the plain reference-token projection.
+ * Projection over the whole user-message text: file-mention blocks become
+ * their chips with the mention text hidden, everything else rides the plain
+ * reference-token projection.
  */
 function projectUserText(text: string): ReactNode {
-  const mentions = fileMentionsIn(text)
-  if (mentions.length === 0) return projectUserTextPlain(text)
+  const blocks = fileMentionsIn(text)
+  if (blocks.length === 0) return projectUserTextPlain(text)
   const parts: ReactNode[] = []
   let cursor = 0
-  for (const mention of mentions) {
-    if (mention.start > cursor) {
-      parts.push(<Fragment key={`text-${cursor}`}>{projectUserTextPlain(text.slice(cursor, mention.start))}</Fragment>)
+  for (const block of blocks) {
+    if (block.start > cursor) {
+      parts.push(<Fragment key={`text-${cursor}`}>{projectUserTextPlain(text.slice(cursor, block.start))}</Fragment>)
     }
-    parts.push(<FileMentionCard key={`file-${mention.start}`} mention={mention} />)
-    cursor = mention.end
+    for (const mention of block.files) {
+      parts.push(<FileMentionCard key={`file-${mention.start}`} mention={mention} />)
+    }
+    cursor = block.end
   }
   if (cursor < text.length) {
     parts.push(<Fragment key={`text-${cursor}`}>{projectUserTextPlain(text.slice(cursor))}</Fragment>)
