@@ -3,8 +3,8 @@
  * narrow RpcRequest<P> and echoes request.rpcId on the RpcResponse<T>.
  */
 
-import { randomUUID } from 'node:crypto'
-import { mkdir, stat, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
@@ -142,15 +142,49 @@ function sanitizeUploadName(name: string): string {
   return base
 }
 
+/** SHA-256 digest of upload bytes, the content-dedupe key. */
+function uploadDigest(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
 /**
- * Write upload bytes under a directory, deduplicating name collisions with a
- * numeric suffix before the final extension (`report.pdf` → `report-1.pdf`).
+ * Persist upload bytes under a directory with content deduplication and
+ * name-collision suffixes.
+ *
+ * An existing file whose bytes are identical is reused as-is — first an
+ * exact same-name match, then any other file with the same size and digest —
+ * so re-uploading the same content never duplicates bytes on disk and keeps
+ * the original path. Only when no existing file matches does the new name
+ * land, with a numeric suffix before the final extension
+ * (`report.pdf` → `report-1.pdf`) when the plain name is taken by different
+ * content. The `wx` exclusive write makes overwrite impossible; the dedupe
+ * scan is a soft optimization, so a scan error just falls through to the
+ * write.
  * @returns the stored file name.
  */
 async function saveUploadedFile(uploadsDir: string, safeName: string, bytes: Uint8Array): Promise<string> {
   const ext = extname(safeName)
   const stem = safeName.slice(0, safeName.length - ext.length)
   await mkdir(uploadsDir, { recursive: true })
+  const digest = uploadDigest(bytes)
+  const sameName = join(uploadsDir, safeName)
+  try {
+    const existing = await readFile(sameName)
+    if (uploadDigest(existing) === digest) return safeName
+  } catch {
+    // Absent or unreadable: fall through to the scan / write below.
+  }
+  try {
+    for (const entry of await readdir(uploadsDir, { withFileTypes: true })) {
+      if (!entry.isFile() || entry.name === safeName || entry.name.startsWith('.')) continue
+      const candidate = join(uploadsDir, entry.name)
+      if ((await stat(candidate)).size !== bytes.byteLength) continue
+      if (uploadDigest(await readFile(candidate)) === digest) return entry.name
+    }
+  } catch {
+    // Dedupe is a soft optimization: an unreadable directory falls through
+    // to the exclusive write.
+  }
   for (let attempt = 0; ; attempt += 1) {
     const name = attempt === 0 ? safeName : `${stem}-${attempt}${ext}`
     try {

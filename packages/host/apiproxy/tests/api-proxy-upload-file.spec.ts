@@ -78,6 +78,48 @@ describe('session.uploadFile', () => {
     await rm(cwd, { recursive: true, force: true })
   })
 
+  it('reuses the existing file when the same content is uploaded again (same name)', async () => {
+    const { ctx, api, cwd } = await harness()
+    const session = ctx.sessions.create(sid('session-5'), { meta: { cwd } })
+    const body = new TextEncoder().encode('identical content')
+    const first = await api.sessions.uploadFile(request({
+      sessionId: session.id,
+      name: 'a.txt',
+      data: base64(body),
+    }))
+    expect(first.result).toMatchObject({ ok: true, value: { path: 'uploads/a.txt' } })
+    const second = await api.sessions.uploadFile(request({
+      sessionId: session.id,
+      name: 'a.txt',
+      data: base64(body),
+    }))
+    // Same content, same name: the original path is returned, no `-1` copy.
+    expect(second.result).toMatchObject({ ok: true, value: { path: 'uploads/a.txt' } })
+    expect(await readdir(join(cwd, 'uploads'))).toEqual(['a.txt'])
+    await rm(cwd, { recursive: true, force: true })
+  })
+
+  it('reuses an existing file of the same content under a different name', async () => {
+    const { ctx, api, cwd } = await harness()
+    const session = ctx.sessions.create(sid('session-6'), { meta: { cwd } })
+    const body = new TextEncoder().encode('shared bytes')
+    const first = await api.sessions.uploadFile(request({
+      sessionId: session.id,
+      name: 'original.md',
+      data: base64(body),
+    }))
+    expect(first.result).toMatchObject({ ok: true, value: { path: 'uploads/original.md' } })
+    const renamed = await api.sessions.uploadFile(request({
+      sessionId: session.id,
+      name: 'copy.md',
+      data: base64(body),
+    }))
+    // Same content under another name: the existing file is reused.
+    expect(renamed.result).toMatchObject({ ok: true, value: { path: 'uploads/original.md' } })
+    expect(await readdir(join(cwd, 'uploads'))).toEqual(['original.md'])
+    await rm(cwd, { recursive: true, force: true })
+  })
+
   it('refuses empty payloads, non-canonical base64, and oversized files', async () => {
     const { ctx, api, cwd } = await harness()
     const session = ctx.sessions.create(sid('session-3'), { meta: { cwd } })
