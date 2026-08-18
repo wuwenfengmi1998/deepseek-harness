@@ -55,11 +55,18 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   const mentions: ChatFileMentions = {
     forClosing(owner) {
-      // Same claim test the turn-tail chain entry runs: no produced files,
-      // no vocabulary — the two surfaces agree by construction.
-      const paths = selectProducedFiles(owner)
-      if (paths === null) return undefined
-      return producedFileMentions(paths, owner.openFile, path => t('produced.open', { name: path }))
+      // The turn-tail chip row still claims only produced files; the prose
+      // vocabulary additionally accepts path-shaped tokens (e.g. files a
+      // terminal produced), so closing prose can link any workspace file.
+      // Non-loopback pages (phones) cannot reach the Host filesystem, so
+      // their opens go through the panel's workspace-file route instead.
+      const paths = selectProducedFiles(owner) ?? []
+      return producedFileMentions(
+        paths,
+        owner.openFile,
+        path => t('produced.open', { name: path }),
+        connection.isLoopback !== true,
+      )
     },
   }
   ctx.provide('chatFileMentions', mentions)

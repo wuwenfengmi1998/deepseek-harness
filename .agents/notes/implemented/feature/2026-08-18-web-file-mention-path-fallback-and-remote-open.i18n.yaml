@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-18-web-file-mention-path-fallback-and-remote-open.md
+2026-08-18-web-file-mention-path-fallback-and-remote-open.md: 9736ba9b8cfadd24384b530b550fa5649837650d
+2026-08-18-web-file-mention-path-fallback-and-remote-open.zh.md: ae9a4304eb012f3b29a746be2b0e64684f8746a7

@@ -153,10 +153,16 @@ export function basename(path: string): string {
  * message's prose: an inline-code token opens the file it names. A token
  * resolves by exact path, or by being exactly the basename of exactly one
  * produced path — a basename two paths share stays inert rather than
- * guessing, so a mention link can never open the wrong file or 404.
+ * guessing, so a mention link can never open the wrong file or 404. Tokens
+ * shaped like a file path that match no produced path still resolve, so
+ * prose can link workspace files produced outside the mutation tools (e.g.
+ * by a terminal command).
  * @param paths - The turn's produced paths (tool order, already deduped).
  * @param openFile - The chat view's file opener.
  * @param label - Localizes the accessible open-label for a resolved path.
+ * @param remoteOpen - When the page cannot reach the Host filesystem (any
+ * non-loopback client, e.g. a phone), opens the file through the panel's
+ * workspace-file route in a new tab instead of the Host default app.
  * @returns The resolver MarkdownText consumes; the full path rides `title`,
  * the same disambiguator the row's chips carry.
  */
@@ -164,14 +170,51 @@ export function producedFileMentions(
   paths: readonly string[],
   openFile: (path: string) => void,
   label: (path: string) => string,
+  remoteOpen = false,
 ): MarkdownFileMentions {
+  const openMention = (path: string) => {
+    if (remoteOpen) {
+      const anchor = document.createElement('a')
+      anchor.href = fileMentionHref(path)
+      anchor.target = '_blank'
+      anchor.rel = 'noopener'
+      anchor.click()
+      return
+    }
+    openFile(path)
+  }
   return {
     resolve(value) {
-      const path = paths.includes(value) ? value : onlyPathWithBasename(paths, value)
-      if (path === undefined) return undefined
-      return { open: () => { openFile(path) }, label: label(path), title: path }
+      const produced = paths.includes(value) ? value : onlyPathWithBasename(paths, value)
+      if (produced !== undefined) {
+        return { open: () => { openMention(produced) }, label: label(produced), title: produced }
+      }
+      if (!looksLikeFilePath(value)) return undefined
+      return { open: () => { openMention(value) }, label: label(value), title: value }
     },
   }
+}
+
+/**
+ * The panel URL that serves one workspace file to the viewing browser.
+ * @param path - Absolute or workspace-relative file path.
+ * @returns The same-origin `/files` route with the path as its query.
+ */
+export function fileMentionHref(path: string): string {
+  return `${location.pathname.replace(/\/+$/, '')}/files?path=${encodeURIComponent(path)}`
+}
+
+/**
+ * Whether a token is shaped like a file path: absolute (POSIX or Windows)
+ * or containing a path separator. The mention vocabulary resolves these
+ * even when no produced path matches, so any workspace file stays openable.
+ * @param value - The inline-code token.
+ * @returns True when the token names a file path.
+ */
+export function looksLikeFilePath(value: string): boolean {
+  if (value === '') return false
+  if (value.startsWith('/') || value.startsWith('\\\\') || /^[A-Za-z]:[/\\]/.test(value)) return true
+  return value.includes('/') || value.includes('\\')
 }
 
 /** The single produced path whose basename is exactly `value`, else undefined. */

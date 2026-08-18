@@ -23,7 +23,8 @@ import {
   fitProducedFiles, ProducedFiles, type ProducedFilesProps,
 } from '../src/client/ProducedFiles.tsx'
 import {
-  basename, deliverablesDefinition, producedFileMentions, producedForClosing, selectProducedFiles,
+  basename, deliverablesDefinition, fileMentionHref, looksLikeFilePath, producedFileMentions,
+  producedForClosing, selectProducedFiles,
   type DeliverablesTurnData,
 } from '../src/client/turn-deliverables.ts'
 import { apply, inject } from '../src/client/index.ts'
@@ -434,6 +435,55 @@ describe('producedFileMentions resolver', () => {
     expect(resolver.resolve('notes.md')).toBeUndefined()
     expect(basename('a\\b\\c.txt')).toBe('c.txt')
   })
+
+  it('resolves path-shaped tokens outside the produced set and opens them', () => {
+    const opened: string[] = []
+    const resolver = producedFileMentions(
+      ['out/index.html'],
+      (path) => { opened.push(path) },
+      label,
+    )
+    const byAbsolute = resolver.resolve('/root/dsh/out/app.pdf')
+    expect(byAbsolute?.label).toBe('打开 /root/dsh/out/app.pdf')
+    expect(byAbsolute?.title).toBe('/root/dsh/out/app.pdf')
+    byAbsolute?.open()
+    const byRelative = resolver.resolve('out/app.pdf')
+    expect(byRelative?.title).toBe('out/app.pdf')
+    byRelative?.open()
+    expect(opened).toEqual(['/root/dsh/out/app.pdf', 'out/app.pdf'])
+    // Tokens without path shape stay inert.
+    expect(resolver.resolve('plain')).toBeUndefined()
+  })
+
+  it('opens remote sessions through the panel file route instead of the Host opener', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click')
+    const opened: string[] = []
+    const resolver = producedFileMentions(
+      ['out/index.html'],
+      (path) => { opened.push(path) },
+      label,
+      true,
+    )
+    resolver.resolve('out/index.html')?.open()
+    resolver.resolve('/root/dsh/out/app.pdf')?.open()
+    expect(opened).toEqual([])
+    expect(click).toHaveBeenCalledTimes(2)
+    const base = location.pathname.replace(/\/+$/, '')
+    expect(fileMentionHref('/root/dsh/a b.pdf'))
+      .toBe(`${base}/files?path=${encodeURIComponent('/root/dsh/a b.pdf')}`)
+  })
+
+  it('recognizes path-shaped tokens: absolute and separator-bearing forms only', () => {
+    expect(looksLikeFilePath('/root/x.txt')).toBe(true)
+    expect(looksLikeFilePath('\\\\server\\share\\x.txt')).toBe(true)
+    expect(looksLikeFilePath('C:\\temp\\x.txt')).toBe(true)
+    expect(looksLikeFilePath('C:/temp/x.txt')).toBe(true)
+    expect(looksLikeFilePath('a/b.txt')).toBe(true)
+    expect(looksLikeFilePath('a\\b.txt')).toBe(true)
+    expect(looksLikeFilePath('notes.md')).toBe(false)
+    expect(looksLikeFilePath('plain')).toBe(false)
+    expect(looksLikeFilePath('')).toBe(false)
+  })
 })
 
 describe('package shells', () => {
@@ -478,7 +528,10 @@ describe('plugin registration', () => {
     expect(entry?.inject?.()).toEqual({ isLoopback: false, hooks: { hostDescription } })
 
     // The prose face is live while the plugin is: a produced turn yields a
-    // resolver whose matches open through the owner-supplied opener.
+    // resolver whose matches open through the owner-supplied opener. This
+    // bench connection is non-loopback, so opens route through the panel
+    // file URL in a new tab instead.
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click')
     const opened: string[] = []
     const owner = tailOwner(
       produced([2, 'site/report.html']),
@@ -488,9 +541,13 @@ describe('plugin registration', () => {
     const service = (ctx as unknown as { get(name: string): ChatFileMentions | undefined }).get('chatFileMentions')
     const mentions = service?.forClosing(owner)
     mentions?.resolve('report.html')?.open()
-    expect(opened).toEqual(['site/report.html'])
-    // A turn that produced nothing yields no vocabulary at all.
-    expect(service?.forClosing(tailOwner(undefined, 2))).toBeUndefined()
+    expect(opened).toEqual([])
+    expect(click).toHaveBeenCalledTimes(1)
+    // A turn that produced nothing still yields a vocabulary whose
+    // path-shaped tokens resolve; plain tokens stay inert.
+    const noProduced = service?.forClosing(tailOwner(undefined, 2))
+    expect(noProduced?.resolve('plain')).toBeUndefined()
+    expect(noProduced?.resolve('/tmp/other.pdf')?.title).toBe('/tmp/other.pdf')
 
     await fiber.dispose()
     expect(ctx.slots.entries('conversation.chat.turnTail')).toHaveLength(0)
