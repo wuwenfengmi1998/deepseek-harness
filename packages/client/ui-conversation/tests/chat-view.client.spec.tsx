@@ -836,7 +836,10 @@ describe('ChatView', () => {
     expect(chips[1]?.textContent).toContain('uploads/a.pdf')
     expect(chips[2]?.textContent).toContain('b.json')
     expect(chips[3]?.textContent).toContain('notes.txt')
-    // Surrounding prose stays literal text.
+    // The mention text itself (header lines included) is hidden, like image
+    // blocks hide their bytes; surrounding prose stays literal text.
+    expect(view.queryByText(/用户上传了/)).toBeNull()
+    expect(view.queryByText(/User attached/)).toBeNull()
     expect(view.getByText(/请查收附件/)).toBeTruthy()
   })
 
