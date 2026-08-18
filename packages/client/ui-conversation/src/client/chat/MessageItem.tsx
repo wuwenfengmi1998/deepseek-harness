@@ -3,7 +3,7 @@
 // assistant answers), pending steering (copy only), context injection,
 // compaction marker, retry disclosure, and unknown-surface JSON rows.
 
-import { memo, useEffect, useMemo, useState } from 'react'
+import { Fragment, memo, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type {
   ModelRetryNode, TurnErrorNode, UserMessageNode,
@@ -154,7 +154,7 @@ function TurnMaxTokensItem({ t }: {
  * scan as the composer, minus the lexicon: sent tokens were validated at
  * compose time, so shape alone decorates).
  */
-function projectUserText(text: string): ReactNode {
+function projectUserTextPlain(text: string): ReactNode {
   const re = /(^|\s)([/@][\w-]+)(?=\s|$)/g
   const parts: ReactNode[] = []
   let cursor = 0
@@ -172,6 +172,102 @@ function projectUserText(text: string): ReactNode {
   }
   if (parts.length === 0) return <MessageText text={text} />
   if (cursor < text.length) parts.push(<MessageText key={cursor} text={text.slice(cursor)} />)
+  return <>{parts}</>
+}
+
+/** One recognized file-mention span inside a user message (presentation only). */
+interface FileMention {
+  /** Start offset of the mention text in the message. */
+  readonly start: number
+  /** End offset (exclusive) of the mention text in the message. */
+  readonly end: number
+  readonly name: string
+  /** Workspace-relative path, e.g. `uploads/report.pdf`. */
+  readonly path: string
+}
+
+/**
+ * Scan user message text for the localized file-mention forms the composer
+ * appends (`file.mention` / `file.mentionMany`). The logged text stays the
+ * single truth; this projection lets history render attached files as chips
+ * the way images render as thumbnails. Spans are disjoint and offset-sorted.
+ */
+function fileMentionsIn(text: string): FileMention[] {
+  const mentions: FileMention[] = []
+  const singles = [
+    /\[用户上传了文件\] (.+?)（已保存至工作区 (.+?)）/g,
+    /\[User attached a file\] (.+?) \(saved to workspace (.+?)\)/g,
+  ]
+  for (const re of singles) {
+    re.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      mentions.push({
+        start: m.index,
+        end: m.index + m[0].length,
+        name: (m[1] ?? '').trim(),
+        path: (m[2] ?? '').trim(),
+      })
+    }
+  }
+  const manies = [
+    /\[用户上传了 \d+ 个文件，已保存至工作区\]\s*\n((?:- [^\n]*(?:\n|$))+)/g,
+    /\[User attached \d+ files, saved to the workspace\]\s*\n((?:- [^\n]*(?:\n|$))+)/g,
+  ]
+  for (const re of manies) {
+    re.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      const body = m[1] ?? ''
+      const bodyStart = m.index + (m[0].length - body.length)
+      let lineStart = bodyStart
+      for (const line of body.split('\n')) {
+        if (line.trim() === '') continue
+        const arrow = line.lastIndexOf(' → ')
+        if (arrow === -1) continue
+        mentions.push({
+          start: lineStart,
+          end: lineStart + line.length,
+          name: line.slice(line.indexOf('- ') + 2, arrow).trim(),
+          path: line.slice(arrow + 3).trim(),
+        })
+        lineStart += line.length + 1
+      }
+    }
+  }
+  return mentions.sort((a, b) => a.start - b.start)
+}
+
+/** One attached-file chip in history, mirroring the draft chips of the composer. */
+function FileMentionCard({ mention }: { mention: FileMention }): ReactNode {
+  return (
+    <span className={css.fileMention} title={`${mention.name}（${mention.path}）`} data-file-mention>
+      <span className={css.fileMentionIcon} aria-hidden>📎</span>
+      <span className={css.fileMentionName}>{mention.name}</span>
+      <span className={css.fileMentionPath}>{mention.path}</span>
+    </span>
+  )
+}
+
+/**
+ * Projection over the whole user-message text: file-mention spans become
+ * chips, everything else rides the plain reference-token projection.
+ */
+function projectUserText(text: string): ReactNode {
+  const mentions = fileMentionsIn(text)
+  if (mentions.length === 0) return projectUserTextPlain(text)
+  const parts: ReactNode[] = []
+  let cursor = 0
+  for (const mention of mentions) {
+    if (mention.start > cursor) {
+      parts.push(<Fragment key={`text-${cursor}`}>{projectUserTextPlain(text.slice(cursor, mention.start))}</Fragment>)
+    }
+    parts.push(<FileMentionCard key={`file-${mention.start}`} mention={mention} />)
+    cursor = mention.end
+  }
+  if (cursor < text.length) {
+    parts.push(<Fragment key={`text-${cursor}`}>{projectUserTextPlain(text.slice(cursor))}</Fragment>)
+  }
   return <>{parts}</>
 }
 

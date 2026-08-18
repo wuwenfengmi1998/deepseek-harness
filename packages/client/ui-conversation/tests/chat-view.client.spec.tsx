@@ -822,6 +822,24 @@ describe('ChatView', () => {
     expect(view.container.querySelectorAll('h1')).toHaveLength(2)
   })
 
+  it('projects file-mention text in user bubbles as file chips (zh/en, single and many)', () => {
+    const singleZh = '请查收附件 [用户上传了文件] report.pdf（已保存至工作区 uploads/report.pdf）'
+    const manyZh = '[用户上传了 2 个文件，已保存至工作区]\n- a.pdf → uploads/a.pdf\n- b.json → uploads/b.json'
+    const singleEn = '[User attached a file] notes.txt (saved to workspace uploads/notes.txt)'
+    const h = makeHarness({ nodes: [user(1, singleZh), user(2, manyZh), user(3, singleEn)] })
+    const view = render(<h.ChatView {...h.props} />)
+    const chips = view.container.querySelectorAll('[data-file-mention]')
+    expect(chips).toHaveLength(4)
+    expect(chips[0]?.textContent).toContain('report.pdf')
+    expect(chips[0]?.textContent).toContain('uploads/report.pdf')
+    expect(chips[1]?.textContent).toContain('a.pdf')
+    expect(chips[1]?.textContent).toContain('uploads/a.pdf')
+    expect(chips[2]?.textContent).toContain('b.json')
+    expect(chips[3]?.textContent).toContain('notes.txt')
+    // Surrounding prose stays literal text.
+    expect(view.getByText(/请查收附件/)).toBeTruthy()
+  })
+
   it('streaming partial frames update the tail without replacing a sibling Tool row', () => {
     const h = makeHarness({
       nodes: [user(1, 'q'), assistant(2, 'old answer'), toolResult(3, 'a')],
